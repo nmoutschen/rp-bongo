@@ -14,7 +14,7 @@ hal::bsp_pins!(
     Gpio3 { name: screen_scl },
     Gpio4 { name: gpio4 },
     Gpio5 { name: gpio5 },
-    Gpio6 { name: temp_sensor },
+    Gpio6 { name: gpio6 },
     Gpio7 { name: gpio7 },
     Gpio8 { name: gpio8 },
     Gpio9 { name: gpio9 },
@@ -34,7 +34,7 @@ hal::bsp_pins!(
     Gpio23 { name: b_power_save },
     Gpio24 { name: vbus_detect },
     Gpio25 { name: led },
-    Gpio26 { name: gpio26 },
+    Gpio26 { name: audio_in },
     Gpio27 { name: gpio27 },
     Gpio28 { name: gpio28 },
     Gpio29 {

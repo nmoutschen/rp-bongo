@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+use core::fmt::Write;
 use cortex_m_rt::entry;
 use embedded_graphics::{
     image::{Image, ImageRawLE},
@@ -9,11 +10,12 @@ use embedded_graphics::{
     prelude::*,
     text::{Baseline, Text},
 };
+use embedded_hal::adc::OneShot;
 use embedded_hal::digital::v2::OutputPin;
 use embedded_time::rate::*;
-use num_format::{Buffer, Locale};
+use heapless::String;
 use panic_halt as _;
-use rp_temp::hal::{self, pac, prelude::*};
+use rp_bongo::hal::{self, pac, prelude::*};
 use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
 
 #[link_section = ".boot2"]
@@ -21,7 +23,8 @@ use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
 #[used]
 pub static BOOT2_FIRMWARE: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 
-static FERRIS: &[u8] = include_bytes!("../ferris.raw");
+static FERRIS1: &[u8] = include_bytes!("../ferris1.raw");
+static FERRIS2: &[u8] = include_bytes!("../ferris2.raw");
 
 #[entry]
 fn main() -> ! {
@@ -33,7 +36,7 @@ fn main() -> ! {
     let mut watchdog = hal::watchdog::Watchdog::new(pac.WATCHDOG);
 
     let clocks = hal::clocks::init_clocks_and_plls(
-        rp_temp::XOSC_CRYSTAL_FREQ,
+        rp_bongo::XOSC_CRYSTAL_FREQ,
         pac.XOSC,
         pac.CLOCKS,
         pac.PLL_SYS,
@@ -46,7 +49,7 @@ fn main() -> ! {
 
     let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer());
 
-    let pins = rp_temp::Pins::new(
+    let pins = rp_bongo::Pins::new(
         pac.IO_BANK0,
         pac.PADS_BANK0,
         sio.gpio_bank0,
@@ -74,51 +77,56 @@ fn main() -> ! {
         .text_color(BinaryColor::On)
         .build();
 
+    // Load ferris
+    let ferris1: ImageRawLE<BinaryColor> = ImageRawLE::new(FERRIS1, 128);
+    let ferris1_img = Image::new(&ferris1, Point::zero());
+
+    let ferris2: ImageRawLE<BinaryColor> = ImageRawLE::new(FERRIS2, 128);
+    let ferris2_img = Image::new(&ferris2, Point::zero());
+
+    let ferris_imgs = [ferris1_img, ferris2_img];
+
+    // let mut led = pins.led.into_push_pull_output();
+
+    // Start ADC
+    let mut adc = hal::Adc::new(pac.ADC, &mut pac.RESETS);
+    let mut audio_in = pins.audio_in.into_floating_input();
+    let mut is_high = false;
+
     // Draw ferris
-    let ferris: ImageRawLE<BinaryColor> = ImageRawLE::new(FERRIS, 128);
-    let ferris_img = Image::new(&ferris, Point::zero());
-    ferris_img.draw(&mut display).unwrap();
+    let mut ferris_cur = 0;
+    ferris_imgs[ferris_cur].draw(&mut display).unwrap();
     display.flush().unwrap();
 
-    let mut led = pins.led.into_push_pull_output();
-
-    let temp_sensor_pin = pins.temp_sensor.into_readable_output();
-    let mut temp_sensor = dht11::Dht11::new(temp_sensor_pin);
-
-    let mut buf = Buffer::new();
+    let mut counter = 0;
 
     loop {
-        led.set_high().unwrap();
-        delay.delay_ms(500);
-        led.set_low().unwrap();
-        delay.delay_ms(500);
-        led.set_high().unwrap();
-        delay.delay_ms(500);
-        led.set_low().unwrap();
-        delay.delay_ms(500);
+        let audio_val: u16 = adc.read(&mut audio_in).unwrap();
 
-        if let Ok(meas) = temp_sensor.perform_measurement(&mut delay) {
+        if !is_high && audio_val > 0x0150 {
+            is_high = true;
+            // Invert the ferris
+            ferris_cur ^= 1;
+            display.flush().unwrap();
+        } else if is_high && audio_val < 0x0150 {
+            is_high = false;
+        }
+
+        counter += 1;
+
+        if counter == 20 {
+            counter = 0;
+            let mut text: String<4> = String::from("");
+            let _ = write!(text, "{:04X}", audio_val);
+
             display.clear();
-
-            // Temperature
-            buf.write_formatted(&(meas.temperature / 10), &Locale::en);
-            Text::with_baseline("Temp: ", Point::zero(), text_style, Baseline::Top)
+            ferris_imgs[ferris_cur].draw(&mut display).unwrap();
+            Text::with_baseline(text.as_str(), Point::new(64, 0), text_style, Baseline::Top)
                 .draw(&mut display)
                 .unwrap();
-            Text::with_baseline(buf.as_str(), Point::new(36, 0), text_style, Baseline::Top)
-                .draw(&mut display)
-                .unwrap();
-
-            // Humidity
-            buf.write_formatted(&meas.humidity, &Locale::en);
-            Text::with_baseline("Humidity: ", Point::new(0, 16), text_style, Baseline::Top)
-                .draw(&mut display)
-                .unwrap();
-            Text::with_baseline(buf.as_str(), Point::new(60, 16), text_style, Baseline::Top)
-                .draw(&mut display)
-                .unwrap();
-
             display.flush().unwrap();
         }
+
+        delay.delay_ms(5);
     }
 }
